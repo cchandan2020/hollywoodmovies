@@ -1,0 +1,1308 @@
+{
+    "swagger": "2.0",
+    "info": {
+      "description": "# Overview \n\nThis document describes API for merchants to transfer Euros between merchant and user wallets.\n\n# API \n\nAPI consists of several REST endpoints to provide basic operations like making a payment, receiving a payout or cancelling these operations.\n\n# Authentication\n\nHMAC+SHA* or RSA+SHA* algorithms are used for request and response signing using API key. \nGenerated signature is wrapped in Base64 and provided in X-Signature HTTP header.\n\nFormat of the signature is the following:\n\n    XXX.YYY\n\nwhere XXX is Base64-encoded header and YYY is Base64-encoded content signature itself.\n\nHeader is JSON that contains information required for proper signature generation:\n\n    Header\n    {\n        \"alg\": \"HS512\", // encryption algorithm. One of HS256,HS384,HS512,RS256,RS384,RS512\n        \"key\": \"OTgxMzI0NjY5OTEyMzQ4\", // key id that was used to generate signature\n        \"timestamp\": 1540905923 // time of the signature generation in Unix Epoch format\n    }\n\nSignature generation algorithm for symmetric encryption (using shared key):\n\n    header.alg( // apply signing algorithm from the header\n      StringToSign,\n      getSecretById(header.key) // returns shared secret key with id=header.key for HS* algorithms and private key for RS* algorithms\n    )\n\n\n    StringToSign =\n      request.method + // HTTP method from the request GET|POST|PUT|PATCH|DELETE etc\n      request.path + // path part of the request\n      request.queryString + // query string of the request\n      request.timestamp.toString() + // string representation of header.timestamp\n      Base64Encode(SHA(removeWhitespace(request.payload))), // Base64-encoded SHA hash of whitespace-cleaned request.payload\n\n\nFunction <code>removeWhitespace</code> removes the following characters from the input string:\n\n    u000a: linefeed LF\n    u000d: carriage return CR\n    u0008: backspace BS\n    u000c: form feed FF\n    u0009: horizontal tab HT\n    u0020: space\n\n\n# Encryption \n\nAll communications are done via HTTPS with TLS v1.2.\n\n# Error handling\n\nAll responses contain <code>status</code> object which represents result of the call.\n\n```json\n{\n    \"status\": {\n        \"code\": \"string\", //  short code of the call result like 'INSUFFICIENT_FUNDS'\n        \"message\": \"string\" // optional detailed error message\n    }\n}\n``` \n\n## Error codes\n\n|Code|Description|\n|---|---|\n|general.not.authorized|Not authorized for the given operation|\n|auth.bad.credentials|Bad credentials|\n|transaction.invalid|Invalid transaction|\n|merchant.not.found|Merchant not found|\n|merchant.unsupported.report.format|Unsupported report format|\n|merchant.api.invalid.refund.receiver|Invalid receiver for refund|\n|merchant.transaction.refunded|Refund for this transaction has already been made|\n|merchant.transaction.id.exist|Transaction with such merchant transaction id already exists|\n|merchant.transaction.not.found|Merchant transaction not found|\n|merchant.transaction.expired|The session has expired and the payment cannot be completed|\n|merchant.insufficient.balance|Insufficient merchant balance|\n|risk.level.limit.merchant.refund.amount.exceeded|Refund is not allowed. The refund amount is above the allowed limit for current wallet|\n|risk.level.limit.merchant.amount.exceeded|The transfer amount is above the allowed limit|\n|thirdparty.aml.verification.hold|Aml hold response|\n|thirdparty.aml.verification.reject|Aml reject response|\n|invalid.amount|Invalid amount|\n|invalid.transfer.status|Invalid transfer status|\n|invalid.transfer.id|Invalid transfer id|\n|invalid.receiver.wallet|Invalid receiver wallet|\n|insufficient.balance|Insufficient balance|\n|address.not.registered.or.inactive|Address is not registered or inactive in the smart contract|\n|payment.method.not.found|User payment method not found|\n\n## Status codes\n\n<table>\n    <thead>\n        <tr>\n            <th>\n                <div>Code</div>\n            </th>\n            <th>\n                <div>Description</div>\n            </th>\n            <th>\n                <div>Status Type</div>\n            </th>\n        </tr>\n    </thead>\n    <tbody>\n        <tr>\n            <td>PENDING</td>\n            <td>Transaction has been successfully initiated</td>\n            <td>intermediate</td>\n        </tr>\n        <tr>\n            <td>PROCESSING</td>\n            <td>Transaction has been accepted and currently being processed</td>\n            <td>intermediate</td>\n        </tr>\n        <tr>\n            <td>REJECTED</td>\n            <td>Transaction has been rejected</td>\n            <td>final</td>\n        </tr>\n        <tr>\n            <td>PROCESSED</td>\n            <td>Transaction has been successfully processed</td>\n            <td>final</td>\n        </tr>\n        <tr>\n            <td>FAILED</td>\n            <td>There was an error during transaction processing</td>\n            <td>final</td>\n        </tr>\n        <tr>\n            <td>CANCELLED</td>\n            <td>Transaction has been cancelled</td>\n            <td>final</td>\n        </tr>\n        <tr>\n            <td>EXPIRED</td>\n            <td>Transaction order is expired</td>\n            <td>final</td>\n        </tr>\n    </tbody>\n</table>\n\n# Webhook \n\nEach merchant must provide callbackUrl to be notified of transaction status changes. This is done upon registration or by support request.\ncallbackUrl must be HTTPS protected with TLS v.1.2. This endpoint must accept requests only from ip addresses that are provided by support team.\nAfter successful payment or payout, merchant gets callback to configured URL when transaction is finalized.\n\nRequest:\n```json\n     \n    {\n        \"transactionId\": \"string\", // Luxon Pay transaction ID\n        \"merchantTransactionId\": \"string\", // unique ID of this transaction in merchant's system\n        \"merchantUserId\": \"string\", // unique ID of the user in merchant's system\n        \"date\": \"string\", // transaction date in ISO 8601 format\n        \"comment\": \"string\", // optional comment\n        \"amount\": number, // amount in EUR that is transferred between wallets\n        \"fee\": number, // amount in EUR that is charged for the transfer\n        \"type\": \"string\", // one of PAYMENT, PAYOUT, REFUND\n        \"userWallet\" : \"string\", // user's wallet ID\n        \"billingAgreementId\": \"string\", // agreement's id that belongs to the merchant\n        \"status\": {\n            \"code\": \"string\",\n            \"message\": \"string\"\n        }\n    } \n```\n# Hosted-API Two step authentication\n\nTwo step authentication to Hosted-API requires additional confirmation from merchant side. \nIt is done by sending confirmation request when user authorizes to . \nPOST request is made to **confirmationCallbackUrl** and response is analysed. \nRequest format:\n\n```json\n{\n    \"transactionId\": \"string\", // transaction ID \"merchantTransactionId\": \"string\", // unique ID of this transaction in merchant's system\n    \"merchantUserId\": \"string\", // unique ID of the user in merchant's system\n    \"date\": \"string\", // transaction date in ISO 8601 format\n    \"comment\": \"string\", // optional comment\n    \"amount\": number, // amount in EUR that is transferred between wallets\n    \"type\": \"string\", // one of MERCHANT_PAYIN, MERCHANT_PAYOUT, MERCHANT_REFUND\n    \"fee\": number, // amount in EUR that is charged for the transfer\n    \"userWallet\": \"string\", // user's wallet ID\n    \"status\": {\n        \"code\": \"string\", \n        \"message\": \"string\"\n    },\n    \"user\": {\n        \"firstName\": \"string\",\n        \"lastName\": \"string\",\n        \"dateOfBirth\": \"string\",  // date in ISO 8601 format\n        \"phone\": \"string\",\n        \"email\": \"string\", \n        \"address\": \"string\",\n        \"country\": \"string\" \n    }\n}\n\n```\nExpected response:\n```json\n{\n  \"action\": \"PROCEED|DECLINE\"\n}\n```\nIf action is “PROCEED”, authentication is processed as usual.\nIf “DECLINE” action is returned, authentication is FAILED.\nOther action values will result in error. \n\nMerchant’s configuration property **confirmationCallbackUrl** can be set up during onboarding or later, by requesting support team.\n\nIf **confirmationCallbackUrl** property is configured, two-step authentication is active. \nOtherwise, no confirmation callback is performed.# How to sign merchant requests\n\nThe following examples shows how to create a signature required for merchant API calls execution.\nThese examples are written using Java language with a help of Jackson Databind library for object mapping.\n\nThere are two supported ways - signature based on a shared key (using HS* algorithms)\nand signature based on a private key kept on your side along with a public key sent to us (RS* algorithms).\nIn both cases signature structure is the following\n\nXXX.YYY\nwhere XXX is Base64-encoded header and YYY is Base64-encoded content signature itself.\n\nHeader is JSON object with the format\n``` \n{\n    \"alg\": \"HS512\", // encryption algorithm. One of HS256,HS384,HS512,RS256,RS384,RS512\n    \"key\": \"OTgxMzI0NjY5OTEyMzQ4\", // key id that was used to generate signature\n    \"timestamp\": 1540905923 // time of the signature generation in Unix Epoch format\n}\n```\n\nPOJO that represent Signature header content\n```java\npublic class SignatureHeader {\n    private String alg;\n    private String key;\n    private Long timestamp;\n    \n    /// Getters and setters are omitted here for readability \n}\n\n```\n\nThe following part is common both for shared key and private + public keys approaches and\ndiffers in ```encodeSignatureContent()``` method implementation only.\n```java\nimport com.fasterxml.jackson.core.JsonProcessingException;\nimport com.fasterxml.jackson.databind.ObjectMapper;\n\nimport javax.crypto.Mac;\nimport javax.crypto.spec.SecretKeySpec;\nimport java.nio.charset.StandardCharsets;\nimport java.security.InvalidKeyException;\nimport java.security.Key;\nimport java.security.MessageDigest;\nimport java.security.NoSuchAlgorithmException;\nimport java.security.PrivateKey;\nimport java.security.Signature;\nimport java.security.SignatureException;\nimport java.time.Instant;\nimport java.util.Arrays;\nimport java.util.Base64;\nimport java.util.HashSet;\nimport java.util.Set;\n\npublic class SignatureGenerator {\n\n\tprivate static final Set<Character> REPLACEMENTS = new HashSet<>(Arrays.asList(\n\t\t\t\t'\\n', // \\u000a: linefeed LF\n\t\t\t\t'\\r', // \\u000d: carriage return CR\n\t\t\t\t'\\b', // \\u0008: backspace BS\n\t\t\t\t'\\f', // \\u000c: form feed FF\n\t\t\t\t'\\t', // \\u0009: horizontal tab HT\n\t\t\t\t' '   // plain space\n\t\t));\n\n\tprivate ObjectMapper objectMapper = new ObjectMapper();\n\n    /**\n     * Main method responsible for signature generation\n     * @param requestMethod - method of a request you want to perform - GET, POST etc.\n     * @param requestPath - path of the request without query parameters\n     * @param queryString - query of the request, empty string (\"\") if request contains no query params\n     * @param requestBody - body of your request as a json string\n     * @param header - POJO that represents header described above\n     * @return - signature to be used\n     */\n\tpublic String generateSignature(String requestMethod, String requestPath, String queryString, String requestBody, SignatureHeader header) throws JsonProcessingException, NoSuchAlgorithmException, InvalidKeyException {\n\t\t\n\t\tString timestamp = header.getTimestamp().toString();\n\t\t\t\n\t\tString content = getContentToEncode(requestMethod, requestPath, queryString, requestBody, timestamp);\n\t\t\n\t    String key = \"\"; //your shared key which id is the same as key id specified in the header\n        String algorithm = \"\"; //Algorithm to be used, one of HmacSHA256, HmacSHA384, HmacSHA512\n        String encodedContent = encodeSignatureContent(content, key, algorithm);\n        \n\t\tString encodedHeader = Base64.getEncoder().encodeToString(objectMapper.writeValueAsString(header).getBytes());\n\t\t\n\t\treturn encodedHeader + \".\" + encodedContent;\n\t}\n\n\tprivate String getContentToEncode(String requestMethod, String requestPath, String queryString, String requestBody, String timestamp) throws NoSuchAlgorithmException {\n\t\t\n\t\t//calculate SHA512 hash of our request body and wrap it in base64 hash\n\t\tString requestBodySHA512Hash = calculateSHA512(requestBody);\n\t\tString base64RequestBody = Base64.getEncoder().encodeToString(requestBodySHA512Hash.getBytes());\n\t\t\n\t\t//Return concatenation of method, path, query string, timestamp and base64 hashed body\n\t\treturn String.join(\"\", requestMethod, requestPath, queryString, timestamp, base64RequestBody);\n\t}\n\n\tprivate String calculateSHA512(String content) throws NoSuchAlgorithmException {\n\t\tString unEscaped = removeEscapeSequenceAndWhitespace(content);\n\t\tMessageDigest messageDigest = MessageDigest.getInstance(\"SHA-512\");\n\t\tmessageDigest.update(unEscaped.getBytes());\n\t\treturn Base64.getEncoder().encodeToString(messageDigest.digest());\n\t}\n\n\tprivate String removeEscapeSequenceAndWhitespace(String original) {\n\t\tStringBuilder builder = new StringBuilder();\n\t\tfor (char c : original.toCharArray()) {\n\t\t\tif (!REPLACEMENTS.contains(c)) {\n\t\t\t\tbuilder.append(c);\n\t\t\t}\n\t\t}\n\t\treturn builder.toString();\n\t}\n\t\n}\n```\n\n**Shared key approach**\n\n```java\n    /**\n     * Encode signature content based on shared key approach\n     * @param content   - content to be encoded\n     * @param key       - your shared key which id is the same as a key id specified in the signature header\n     * @param algorithm - algorithm to be used, one of HmacSHA256, HmacSHA384, HmacSHA512\n     * @return - encoded content\n     */\n    private String encodeSignatureContent(String content, PrivateKey key, String algorithm) throws NoSuchAlgorithmException, InvalidKeyException, SignatureException {\n        Signature privateSignature = Signature.getInstance(algorithm);\n        privateSignature.initSign(key);\n        privateSignature.update(content.getBytes(StandardCharsets.UTF_8));\n        \n        byte[] signature = privateSignature.sign();\n        \n        return Base64.getEncoder().encodeToString(signature);\n    }\n\n```\n\n**Public + private key approach**\n\n```\n/**\n * Encode signature content based on public + private keys approach\n * @param content - content to be encoded\n * @param key - your private key which id is the same as a key id specified in the signature header\n * @param algorithm - algorithm to be used, one of SHA256withRSA, SHA384withRSA, SHA512withRSA\n * @return - encoded content\n */\nprivate String encodeSignatureContent(String content, PrivateKey key, String alogrithm) {\n    \n    Signature privateSignature = Signature.getInstance(algorithm);\n    privateSignature.initSign(key);\n    privateSignature.update(toEncode.getBytes(StandardCharsets.UTF_8));\n\n    byte[] signature = privateSignature.sign();\n\n    return Base64.getEncoder().encodeToString(signature);  \n}\n```\n\n**How to generate public + private keys pair**\n\n```\nimport java.security.KeyPair;\nimport java.security.KeyPairGenerator;\nimport java.security.NoSuchAlgorithmException;\nimport java.security.PrivateKey;\nimport java.security.PublicKey;\n\npublic class KeyGenerator {\n    \n    private static final int KEY_SIZE = 2048;\n    private static final String ALGORITHM = \"RSA\";\n    \n    public KeyPair generateKeyPair() throws NoSuchAlgorithmException {\n        KeyPairGenerator keyGen = KeyPairGenerator.getInstance(ALGORITHM);\n        keyGen.initialize(KEY_SIZE);\n        return keyGen.genKeyPair();\n    }\n}\n```\n\nNow you can call ```getPrivateKey()``` and ```getPublicKey()``` on the KeyPair object returned to obtain private and public keys correspondingly",
+      "version": "1.0",
+      "title": "Merchant API"
+    },
+    "host": "localhost:8081",
+    "basePath": "/",
+    "tags": [
+      {
+        "name": "ca-merchant-web-hook-controller",
+        "description": "Ca Merchant Web Hook Controller"
+      },
+      {
+        "name": "merchant-controller",
+        "description": "Set of endpoints for creating Payments and Payouts by Merchant, to be authorized later on by your customers. Additionally provides endpoints for retrieving transaction details with current status and possibility to cancel them,  get merchant balance, perform full refund from merchant to user wallet,  get transaction report for selected dates, initiate a webhook call to send merchant the transaction status."
+      },
+      {
+        "name": "operation-handler",
+        "description": "Operation Handler"
+      }
+    ],
+    "paths": {
+      "/actuator/info": {
+        "get": {
+          "tags": [
+            "operation-handler"
+          ],
+          "summary": "handle",
+          "operationId": "handleUsingGET",
+          "produces": [
+            "application/json",
+            "application/vnd.spring-boot.actuator.v2+json"
+          ],
+          "parameters": [
+            {
+              "in": "body",
+              "name": "body",
+              "description": "body",
+              "required": false,
+              "schema": {
+                "type": "object",
+                "additionalProperties": {
+                  "type": "string"
+                }
+              }
+            }
+          ],
+          "responses": {
+            "200": {
+              "description": "OK",
+              "schema": {
+                "type": "object"
+              }
+            },
+            "401": {
+              "description": "Unauthorized"
+            },
+            "403": {
+              "description": "Forbidden"
+            },
+            "404": {
+              "description": "Not Found"
+            }
+          },
+          "deprecated": false
+        }
+      },
+      "/api/v1/merchant/billing-agreements": {
+        "post": {
+          "tags": [
+            "merchant-controller"
+          ],
+          "summary": "Create Billing Agreement",
+          "description": "Creates new Billing Agreement, that will allow merchant to make operations behalf user without confirmation",
+          "operationId": "createBillingAgreementUsingPOST",
+          "consumes": [
+            "application/json"
+          ],
+          "produces": [
+            "*/*"
+          ],
+          "parameters": [
+            {
+              "in": "body",
+              "name": "billingAgreementCreateRequest",
+              "description": "billingAgreementCreateRequest",
+              "required": true,
+              "schema": {
+                "$ref": "#/definitions/BillingAgreementCreateRequest"
+              }
+            }
+          ],
+          "responses": {
+            "200": {
+              "description": "Successful creation of billing agreement",
+              "schema": {
+                "$ref": "#/definitions/Response"
+              }
+            },
+            "201": {
+              "description": "Created"
+            },
+            "400": {
+              "description": "Duplicate billing agreement id entry",
+              "schema": {
+                "$ref": "#/definitions/Response"
+              }
+            },
+            "401": {
+              "description": "Access forbidden, invalid request signature",
+              "schema": {
+                "$ref": "#/definitions/Response"
+              }
+            },
+            "403": {
+              "description": "Forbidden"
+            },
+            "404": {
+              "description": "Not Found"
+            },
+            "500": {
+              "description": "Internal server error",
+              "schema": {
+                "$ref": "#/definitions/Response"
+              }
+            }
+          },
+          "security": [
+            {
+              "HMAC": []
+            }
+          ],
+          "deprecated": false
+        }
+      },
+      "/api/v1/merchant/billing-agreements/{agreementId}/balance": {
+        "get": {
+          "tags": [
+            "merchant-controller"
+          ],
+          "summary": "Get balance with Billing Agreement",
+          "description": "Get user's wallet balance by billing agreement.",
+          "operationId": "checkBalanceWithBillingAgreementUsingGET",
+          "produces": [
+            "*/*"
+          ],
+          "parameters": [
+            {
+              "name": "agreementId",
+              "in": "path",
+              "description": "agreementId",
+              "required": true,
+              "type": "string"
+            }
+          ],
+          "responses": {
+            "200": {
+              "description": "Successful getting of balance",
+              "schema": {
+                "$ref": "#/definitions/BillingAgreementUserBalanceResponse"
+              }
+            },
+            "401": {
+              "description": "Access forbidden, invalid request signature",
+              "schema": {
+                "$ref": "#/definitions/Response"
+              }
+            },
+            "403": {
+              "description": "Forbidden"
+            },
+            "404": {
+              "description": "Not Found"
+            },
+            "500": {
+              "description": "Internal server error",
+              "schema": {
+                "$ref": "#/definitions/Response"
+              }
+            }
+          },
+          "security": [
+            {
+              "HMAC": []
+            }
+          ],
+          "deprecated": false
+        }
+      },
+      "/api/v1/merchant/billing-agreements/{id}": {
+        "get": {
+          "tags": [
+            "merchant-controller"
+          ],
+          "summary": "Get Billing Agreement",
+          "description": "Get existed Billing Agreement.",
+          "operationId": "getBillingAgreementUsingGET",
+          "produces": [
+            "*/*"
+          ],
+          "parameters": [
+            {
+              "name": "id",
+              "in": "path",
+              "description": "id",
+              "required": true,
+              "type": "string"
+            }
+          ],
+          "responses": {
+            "200": {
+              "description": "Successful getting of Billing Agreement",
+              "schema": {
+                "$ref": "#/definitions/Response"
+              }
+            },
+            "401": {
+              "description": "Access forbidden, invalid request signature",
+              "schema": {
+                "$ref": "#/definitions/Response"
+              }
+            },
+            "403": {
+              "description": "Forbidden"
+            },
+            "404": {
+              "description": "Not Found"
+            },
+            "500": {
+              "description": "Internal server error",
+              "schema": {
+                "$ref": "#/definitions/Response"
+              }
+            }
+          },
+          "security": [
+            {
+              "HMAC": []
+            }
+          ],
+          "deprecated": false
+        }
+      },
+      "/api/v1/merchant/billing-agreements/{id}/cancel": {
+        "post": {
+          "tags": [
+            "merchant-controller"
+          ],
+          "summary": "Cancel Billing Agreement",
+          "description": "Cancel existed Billing Agreement.",
+          "operationId": "cancelBillingAgreementUsingPOST",
+          "consumes": [
+            "application/json"
+          ],
+          "produces": [
+            "*/*"
+          ],
+          "parameters": [
+            {
+              "name": "id",
+              "in": "path",
+              "description": "id",
+              "required": true,
+              "type": "string"
+            }
+          ],
+          "responses": {
+            "200": {
+              "description": "Successful cancellation of billing agreement",
+              "schema": {
+                "$ref": "#/definitions/Response"
+              }
+            },
+            "201": {
+              "description": "Created"
+            },
+            "401": {
+              "description": "Access forbidden, invalid request signature",
+              "schema": {
+                "$ref": "#/definitions/Response"
+              }
+            },
+            "403": {
+              "description": "Forbidden"
+            },
+            "404": {
+              "description": "Not Found"
+            },
+            "500": {
+              "description": "Internal server error",
+              "schema": {
+                "$ref": "#/definitions/Response"
+              }
+            }
+          },
+          "security": [
+            {
+              "HMAC": []
+            }
+          ],
+          "deprecated": false
+        }
+      },
+      "/api/v1/merchant/billing-agreements/{id}/user": {
+        "get": {
+          "tags": [
+            "merchant-controller"
+          ],
+          "summary": "Get user's data by Billing Agreement.",
+          "description": "Get walletAddress, firstName, lastName, dateOfBirth, registrationCountry by Billing Agreement id",
+          "operationId": "getUserDataByBillingAgreementUsingGET",
+          "produces": [
+            "*/*"
+          ],
+          "parameters": [
+            {
+              "name": "id",
+              "in": "path",
+              "description": "id",
+              "required": true,
+              "type": "string"
+            }
+          ],
+          "responses": {
+            "200": {
+              "description": "Successful getting of user's data",
+              "schema": {
+                "$ref": "#/definitions/BillingAgreementUserDataResponse"
+              }
+            },
+            "401": {
+              "description": "Access forbidden, invalid request signature",
+              "schema": {
+                "$ref": "#/definitions/Response"
+              }
+            },
+            "403": {
+              "description": "Forbidden"
+            },
+            "404": {
+              "description": "Not Found"
+            },
+            "500": {
+              "description": "Internal server error",
+              "schema": {
+                "$ref": "#/definitions/Response"
+              }
+            }
+          },
+          "security": [
+            {
+              "HMAC": []
+            }
+          ],
+          "deprecated": false
+        }
+      },
+      "/api/v1/merchant/payment": {
+        "post": {
+          "tags": [
+            "merchant-controller"
+          ],
+          "summary": "Create Payment",
+          "description": "Transfers coins(euros) from users's wallet to merchant. 'transactionId' is unique Luxon Pay transaction identifier that can be used for transaction reference in other API calls.\n\n|Returned error codes|\n|---|\n|general.not.authorized|\n|auth.bad.credentials|\n|merchant.not.found|\n|merchant.transaction.id.exist|",
+          "operationId": "createPaymentUsingPOST",
+          "consumes": [
+            "application/json"
+          ],
+          "produces": [
+            "*/*"
+          ],
+          "parameters": [
+            {
+              "in": "body",
+              "name": "paymentCreateRequest",
+              "description": "paymentCreateRequest",
+              "required": true,
+              "schema": {
+                "$ref": "#/definitions/PaymentCreateRequest"
+              }
+            }
+          ],
+          "responses": {
+            "200": {
+              "description": "OK",
+              "schema": {
+                "$ref": "#/definitions/ResponseEntity"
+              }
+            },
+            "201": {
+              "description": "Successful creation of payment",
+              "schema": {
+                "$ref": "#/definitions/PaymentCreateResponse"
+              }
+            },
+            "400": {
+              "description": "Duplicate merchant transaction id entry",
+              "schema": {
+                "$ref": "#/definitions/Response"
+              }
+            },
+            "401": {
+              "description": "Access forbidden, invalid request signature",
+              "schema": {
+                "$ref": "#/definitions/Response"
+              }
+            },
+            "403": {
+              "description": "Forbidden"
+            },
+            "404": {
+              "description": "Not Found"
+            },
+            "500": {
+              "description": "Internal server error",
+              "schema": {
+                "$ref": "#/definitions/Response"
+              }
+            }
+          },
+          "security": [
+            {
+              "HMAC": []
+            }
+          ],
+          "deprecated": false
+        }
+      },
+      "/api/v1/merchant/payout": {
+        "post": {
+          "tags": [
+            "merchant-controller"
+          ],
+          "summary": "Create payout",
+          "description": "Transfer funds from merchant wallet to a Luxon Payments user wallet.\n\n|Returned error codes|\n|---|\n|general.not.authorized|\n|auth.bad.credentials|\n|merchant.transaction.id.exist|\n|merchant.transaction.not.found|\n|merchant.not.found|\n|merchant.insufficient.balance|\n|address.not.registered.or.inactive|\n|payment.method.not.found|\n|invalid.transfer.id|\n|invalid.receiver.wallet|\n|risk.level.limit.merchant.amount.exceeded|\n|thirdparty.aml.verification.hold|\n|thirdparty.aml.verification.reject|",
+          "operationId": "createPayoutUsingPOST",
+          "consumes": [
+            "application/json"
+          ],
+          "produces": [
+            "*/*"
+          ],
+          "parameters": [
+            {
+              "in": "body",
+              "name": "request",
+              "description": "request",
+              "required": true,
+              "schema": {
+                "$ref": "#/definitions/PayoutCreateRequest"
+              }
+            }
+          ],
+          "responses": {
+            "200": {
+              "description": "Payout created",
+              "schema": {
+                "$ref": "#/definitions/PayoutCreateResponse"
+              }
+            },
+            "201": {
+              "description": "Created"
+            },
+            "400": {
+              "description": "Duplicate merchant transaction id entry",
+              "schema": {
+                "$ref": "#/definitions/Response"
+              }
+            },
+            "401": {
+              "description": "Access forbidden, invalid request signature",
+              "schema": {
+                "$ref": "#/definitions/Response"
+              }
+            },
+            "403": {
+              "description": "Forbidden"
+            },
+            "404": {
+              "description": "Not Found"
+            },
+            "406": {
+              "description": "Payment methods invalid or insufficient balance",
+              "schema": {
+                "$ref": "#/definitions/Response"
+              }
+            },
+            "500": {
+              "description": "Internal server error",
+              "schema": {
+                "$ref": "#/definitions/Response"
+              }
+            }
+          },
+          "security": [
+            {
+              "HMAC": []
+            }
+          ],
+          "deprecated": false
+        }
+      },
+      "/api/v1/merchant/transaction/{transactionId}": {
+        "get": {
+          "tags": [
+            "merchant-controller"
+          ],
+          "summary": "Get Transaction",
+          "description": "Get detailed information about a transaction with 'transactionId' identifier\n\n|Returned error codes|\n|---|\n|general.not.authorized|\n|auth.bad.credentials|\n|merchant.transaction.not.found|",
+          "operationId": "getTransactionUsingGET",
+          "produces": [
+            "*/*"
+          ],
+          "parameters": [
+            {
+              "name": "transactionId",
+              "in": "path",
+              "description": "transactionId",
+              "required": true,
+              "type": "string",
+              "format": "uuid"
+            }
+          ],
+          "responses": {
+            "200": {
+              "description": "Return payment details",
+              "schema": {
+                "$ref": "#/definitions/Response"
+              }
+            },
+            "400": {
+              "description": "Attempt to access invalid transaction",
+              "schema": {
+                "$ref": "#/definitions/Response"
+              }
+            },
+            "401": {
+              "description": "Access forbidden, invalid request signature",
+              "schema": {
+                "$ref": "#/definitions/Response"
+              }
+            },
+            "403": {
+              "description": "Forbidden"
+            },
+            "404": {
+              "description": "Not Found"
+            },
+            "500": {
+              "description": "Internal server error",
+              "schema": {
+                "$ref": "#/definitions/Response"
+              }
+            }
+          },
+          "security": [
+            {
+              "HMAC": []
+            }
+          ],
+          "deprecated": false
+        }
+      },
+      "/api/v1/merchant/transaction/{transactionId}/cancel": {
+        "post": {
+          "tags": [
+            "merchant-controller"
+          ],
+          "summary": "Cancel Transaction",
+          "description": "Cancel transaction with 'transactionId' identifier.\n\n|Returned error codes|\n|---|\n|general.not.authorized|auth.bad.credentials|\n|merchant.transaction.not.found|\n|merchant.transaction.expired|\n|invalid.transfer.status|",
+          "operationId": "cancelTransactionUsingPOST",
+          "consumes": [
+            "application/json"
+          ],
+          "produces": [
+            "*/*"
+          ],
+          "parameters": [
+            {
+              "name": "transactionId",
+              "in": "path",
+              "description": "transactionId",
+              "required": true,
+              "type": "string",
+              "format": "uuid"
+            }
+          ],
+          "responses": {
+            "200": {
+              "description": "Transaction cancelled",
+              "schema": {
+                "$ref": "#/definitions/Response"
+              }
+            },
+            "201": {
+              "description": "Created"
+            },
+            "400": {
+              "description": "Attempt to access invalid transaction",
+              "schema": {
+                "$ref": "#/definitions/Response"
+              }
+            },
+            "401": {
+              "description": "Access forbidden, invalid request signature",
+              "schema": {
+                "$ref": "#/definitions/Response"
+              }
+            },
+            "403": {
+              "description": "Forbidden"
+            },
+            "404": {
+              "description": "Not Found"
+            },
+            "409": {
+              "description": "Transaction cannot be canceled",
+              "schema": {
+                "$ref": "#/definitions/Response"
+              }
+            },
+            "500": {
+              "description": "Internal server error",
+              "schema": {
+                "$ref": "#/definitions/Response"
+              }
+            }
+          },
+          "security": [
+            {
+              "HMAC": []
+            }
+          ],
+          "deprecated": false
+        }
+      },
+      "/api/v1/merchant/transaction/{transactionId}/refund": {
+        "post": {
+          "tags": [
+            "merchant-controller"
+          ],
+          "summary": "Performs full refund for specified transaction",
+          "description": "This API helps a merchant to refund payments, made by a user to merchant’s wallet, using the 'transactionId' identifier\n\n|Returned error codes|\n|---|\n|general.not.authorized|\n|auth.bad.credentials|\n|transaction.invalid|\n|invalid.transfer.status|\n|invalid.amount|\n|insufficient.balance|\n|risk.level.limit.merchant.refund.amount.exceeded|\n|merchant.api.invalid.refund.receiver|\n|merchant.transaction.refunded|\n|merchant.transaction.not.found|\n|thirdparty.aml.verification.hold|\n|thirdparty.aml.verification.reject|",
+          "operationId": "performRefundUsingPOST",
+          "consumes": [
+            "application/json"
+          ],
+          "produces": [
+            "*/*"
+          ],
+          "parameters": [
+            {
+              "in": "body",
+              "name": "request",
+              "description": "request",
+              "required": true,
+              "schema": {
+                "$ref": "#/definitions/RefundRequest"
+              }
+            },
+            {
+              "name": "transactionId",
+              "in": "path",
+              "description": "transactionId",
+              "required": true,
+              "type": "string",
+              "format": "uuid"
+            }
+          ],
+          "responses": {
+            "200": {
+              "description": "Refund confirmed and is being processed now",
+              "schema": {
+                "$ref": "#/definitions/Response"
+              }
+            },
+            "201": {
+              "description": "Created"
+            },
+            "400": {
+              "description": "Invalid transaction id or invalid receiver",
+              "schema": {
+                "$ref": "#/definitions/Response"
+              }
+            },
+            "401": {
+              "description": "Access forbidden, invalid request signature",
+              "schema": {
+                "$ref": "#/definitions/Response"
+              }
+            },
+            "403": {
+              "description": "Forbidden"
+            },
+            "404": {
+              "description": "Not Found"
+            },
+            "500": {
+              "description": "Internal server error",
+              "schema": {
+                "$ref": "#/definitions/Response"
+              }
+            }
+          },
+          "security": [
+            {
+              "HMAC": []
+            }
+          ],
+          "deprecated": false
+        }
+      },
+      "/api/v1/merchant/transaction/{transactionId}/repost": {
+        "post": {
+          "tags": [
+            "merchant-controller"
+          ],
+          "summary": "Resend transaction status to merchant callback url",
+          "description": "This API allows merchants to initiate a “webhook call” or a call-back with the status of the transaction with 'transactionId' identifier\n\n|Returned error codes|\n|---|\n|general.not.authorized|\n|auth.bad.credentials|\n|merchant.transaction.not.found|",
+          "operationId": "resendTransactionStatusUsingPOST",
+          "consumes": [
+            "application/json"
+          ],
+          "produces": [
+            "*/*"
+          ],
+          "parameters": [
+            {
+              "name": "transactionId",
+              "in": "path",
+              "description": "transactionId",
+              "required": true,
+              "type": "string",
+              "format": "uuid"
+            }
+          ],
+          "responses": {
+            "200": {
+              "description": "Transaction status has been sent",
+              "schema": {
+                "$ref": "#/definitions/Response"
+              }
+            },
+            "201": {
+              "description": "Created"
+            },
+            "400": {
+              "description": "Invalid transaction id",
+              "schema": {
+                "$ref": "#/definitions/Response"
+              }
+            },
+            "401": {
+              "description": "Access forbidden, invalid request signature",
+              "schema": {
+                "$ref": "#/definitions/Response"
+              }
+            },
+            "403": {
+              "description": "Forbidden"
+            },
+            "404": {
+              "description": "Not Found"
+            },
+            "500": {
+              "description": "Internal server error",
+              "schema": {
+                "$ref": "#/definitions/Response"
+              }
+            }
+          },
+          "security": [
+            {
+              "HMAC": []
+            }
+          ],
+          "deprecated": false
+        }
+      },
+      "/api/v1/merchant/transactions/report.{format}": {
+        "get": {
+          "tags": [
+            "merchant-controller"
+          ],
+          "summary": "Get detailed information about transactions for a given period, filtered by status",
+          "description": "Format may be 'json' or 'csv' which sets the type of output file. start_date - optional, set starting date of the time period to generate report for. Default equals to the first merchant's transaction date. end_date - optional, set ending date of the time period to generate report for. Default equals to the last merchant's transaction date. If both start_date and end_date is absent, report is generated for all transactions. Date format is ISO 8601.\n\n|Returned error codes|\n|---|\n|general.not.authorized|\n|auth.bad.credentials|\n|merchant.unsupported.report.format|",
+          "operationId": "getMerchantTransactionsReportUsingGET",
+          "produces": [
+            "*/*"
+          ],
+          "parameters": [
+            {
+              "name": "billingAgreementId",
+              "in": "query",
+              "required": false,
+              "type": "string"
+            },
+            {
+              "name": "endDate",
+              "in": "query",
+              "required": false,
+              "type": "string"
+            },
+            {
+              "name": "format",
+              "in": "path",
+              "description": "format",
+              "required": true,
+              "type": "string"
+            },
+            {
+              "name": "startDate",
+              "in": "query",
+              "required": false,
+              "type": "string"
+            },
+            {
+              "name": "statuses",
+              "in": "query",
+              "required": false,
+              "type": "array",
+              "items": {
+                "type": "string",
+                "enum": [
+                  "PENDING",
+                  "PROCESSING",
+                  "REJECTED",
+                  "PROCESSED",
+                  "FAILED",
+                  "CANCELLED",
+                  "EXPIRED"
+                ]
+              },
+              "collectionFormat": "multi",
+              "enum": [
+                "PENDING",
+                "PROCESSING",
+                "REJECTED",
+                "PROCESSED",
+                "FAILED",
+                "CANCELLED",
+                "EXPIRED"
+              ]
+            },
+            {
+              "name": "transactionIds",
+              "in": "query",
+              "required": false,
+              "type": "string"
+            }
+          ],
+          "responses": {
+            "200": {
+              "description": "Report generated"
+            },
+            "401": {
+              "description": "Access forbidden, invalid request signature",
+              "schema": {
+                "$ref": "#/definitions/Response"
+              }
+            },
+            "403": {
+              "description": "Forbidden"
+            },
+            "404": {
+              "description": "Not Found"
+            },
+            "500": {
+              "description": "Internal server error",
+              "schema": {
+                "$ref": "#/definitions/Response"
+              }
+            }
+          },
+          "security": [
+            {
+              "HMAC": []
+            }
+          ],
+          "deprecated": false
+        }
+      },
+      "/api/v1/merchant/wallet": {
+        "get": {
+          "tags": [
+            "merchant-controller"
+          ],
+          "summary": "Allows merchants to request the balance of their wallet",
+          "description": "\n\n|Returned error codes|\n|---|\n|general.not.authorized|\n|auth.bad.credentials|\n|merchant.not.found|",
+          "operationId": "getMerchantWalletBalanceUsingGET",
+          "produces": [
+            "*/*"
+          ],
+          "responses": {
+            "200": {
+              "description": "Balance retrieved successfully",
+              "schema": {
+                "$ref": "#/definitions/MerchantBalanceResponse"
+              }
+            },
+            "401": {
+              "description": "Access forbidden, invalid request signature",
+              "schema": {
+                "$ref": "#/definitions/Response"
+              }
+            },
+            "403": {
+              "description": "Forbidden"
+            },
+            "404": {
+              "description": "Not Found"
+            },
+            "500": {
+              "description": "Internal server error",
+              "schema": {
+                "$ref": "#/definitions/Response"
+              }
+            }
+          },
+          "security": [
+            {
+              "HMAC": []
+            }
+          ],
+          "deprecated": false
+        }
+      },
+      "/api/v1/webhooks/ca/merchant_transaction": {
+        "post": {
+          "tags": [
+            "ca-merchant-web-hook-controller"
+          ],
+          "summary": "Handle merchant transaction status changed",
+          "operationId": "transactionChangedUsingPOST",
+          "consumes": [
+            "application/json"
+          ],
+          "produces": [
+            "*/*"
+          ],
+          "parameters": [
+            {
+              "in": "body",
+              "name": "request",
+              "description": "request",
+              "required": true,
+              "schema": {
+                "$ref": "#/definitions/TransactionWebHookRequest"
+              }
+            }
+          ],
+          "responses": {
+            "200": {
+              "description": "OK"
+            },
+            "201": {
+              "description": "Created"
+            },
+            "401": {
+              "description": "Unauthorized"
+            },
+            "403": {
+              "description": "Forbidden"
+            },
+            "404": {
+              "description": "Not Found"
+            }
+          },
+          "deprecated": false
+        }
+      }
+    },
+    "securityDefinitions": {
+      "HMAC": {
+        "type": "apiKey",
+        "name": "X-Signature",
+        "in": "header"
+      },
+      "Session": {
+        "type": "apiKey",
+        "name": "X-Auth-Token",
+        "in": "header"
+      }
+    },
+    "definitions": {
+      "BillingAgreementCreateRequest": {
+        "type": "object",
+        "properties": {
+          "durationInDays": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "redirectUrl": {
+            "type": "string"
+          }
+        },
+        "title": "BillingAgreementCreateRequest"
+      },
+      "BillingAgreementUserBalanceResponse": {
+        "type": "object",
+        "properties": {
+          "balance": {
+            "type": "integer"
+          }
+        },
+        "title": "BillingAgreementUserBalanceResponse"
+      },
+      "BillingAgreementUserDataResponse": {
+        "type": "object",
+        "properties": {
+          "dateOfBirth": {
+            "type": "string",
+            "format": "date"
+          },
+          "firstName": {
+            "type": "string"
+          },
+          "lastName": {
+            "type": "string"
+          },
+          "registrationCountry": {
+            "type": "string"
+          },
+          "walletAddress": {
+            "type": "string"
+          }
+        },
+        "title": "BillingAgreementUserDataResponse"
+      },
+      "MerchantBalanceResponse": {
+        "type": "object",
+        "properties": {
+          "balance": {
+            "type": "integer"
+          }
+        },
+        "title": "MerchantBalanceResponse"
+      },
+      "PaymentCreateRequest": {
+        "type": "object",
+        "properties": {
+          "amount": {
+            "type": "integer"
+          },
+          "billingAgreementId": {
+            "type": "string"
+          },
+          "comment": {
+            "type": "string"
+          },
+          "merchantTransactionId": {
+            "type": "string"
+          },
+          "merchantUserId": {
+            "type": "string"
+          },
+          "redirectUrl": {
+            "type": "string"
+          }
+        },
+        "title": "PaymentCreateRequest"
+      },
+      "PaymentCreateResponse": {
+        "type": "object",
+        "properties": {
+          "status": {
+            "$ref": "#/definitions/Status"
+          },
+          "transactionId": {
+            "type": "string"
+          },
+          "transactionUrl": {
+            "type": "string"
+          }
+        },
+        "title": "PaymentCreateResponse",
+        "description": "'transactionId' is unique Luxon Pay transaction identifier that can be used for transaction reference in other API calls."
+      },
+      "PayoutCreateRequest": {
+        "type": "object",
+        "properties": {
+          "amount": {
+            "type": "integer"
+          },
+          "billingAgreementId": {
+            "type": "string"
+          },
+          "comment": {
+            "type": "string"
+          },
+          "merchantTransactionId": {
+            "type": "string"
+          },
+          "merchantUserId": {
+            "type": "string"
+          },
+          "recipientWallet": {
+            "type": "string"
+          }
+        },
+        "title": "PayoutCreateRequest"
+      },
+      "PayoutCreateResponse": {
+        "type": "object",
+        "properties": {
+          "fee": {
+            "type": "integer"
+          },
+          "status": {
+            "$ref": "#/definitions/Status"
+          },
+          "transactionId": {
+            "type": "string"
+          }
+        },
+        "title": "PayoutCreateResponse",
+        "description": "'transactionId' is unique Luxon Pay transaction identifier that can be used for transaction reference in other API calls."
+      },
+      "RefundRequest": {
+        "type": "object",
+        "properties": {
+          "comment": {
+            "type": "string"
+          }
+        },
+        "title": "RefundRequest"
+      },
+      "Response": {
+        "type": "object",
+        "properties": {
+          "agreementId": {
+            "type": "string"
+          },
+          "amount": {
+            "type": "integer"
+          },
+          "billingAgreementId": {
+            "type": "string"
+          },
+          "comment": {
+            "type": "string"
+          },
+          "date": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "endDate": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "endDay": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "fee": {
+            "type": "integer"
+          },
+          "merchantTransactionId": {
+            "type": "string"
+          },
+          "merchantUserId": {
+            "type": "string"
+          },
+          "redirectUrl": {
+            "type": "string"
+          },
+          "startDate": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "startDay": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "status": {
+            "$ref": "#/definitions/Status"
+          },
+          "transactionId": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "type": {
+            "type": "string",
+            "enum": [
+              "MERCHANT_PAYOUT",
+              "MERCHANT_PAYIN",
+              "MERCHANT_REFUND"
+            ]
+          },
+          "userWallet": {
+            "type": "string"
+          }
+        },
+        "title": "Response"
+      },
+      "ResponseEntity": {
+        "type": "object",
+        "properties": {
+          "body": {
+            "type": "object"
+          },
+          "statusCode": {
+            "type": "string",
+            "enum": [
+              "100 CONTINUE",
+              "101 SWITCHING_PROTOCOLS",
+              "102 PROCESSING",
+              "103 CHECKPOINT",
+              "200 OK",
+              "201 CREATED",
+              "202 ACCEPTED",
+              "203 NON_AUTHORITATIVE_INFORMATION",
+              "204 NO_CONTENT",
+              "205 RESET_CONTENT",
+              "206 PARTIAL_CONTENT",
+              "207 MULTI_STATUS",
+              "208 ALREADY_REPORTED",
+              "226 IM_USED",
+              "300 MULTIPLE_CHOICES",
+              "301 MOVED_PERMANENTLY",
+              "302 FOUND",
+              "302 MOVED_TEMPORARILY",
+              "303 SEE_OTHER",
+              "304 NOT_MODIFIED",
+              "305 USE_PROXY",
+              "307 TEMPORARY_REDIRECT",
+              "308 PERMANENT_REDIRECT",
+              "400 BAD_REQUEST",
+              "401 UNAUTHORIZED",
+              "402 PAYMENT_REQUIRED",
+              "403 FORBIDDEN",
+              "404 NOT_FOUND",
+              "405 METHOD_NOT_ALLOWED",
+              "406 NOT_ACCEPTABLE",
+              "407 PROXY_AUTHENTICATION_REQUIRED",
+              "408 REQUEST_TIMEOUT",
+              "409 CONFLICT",
+              "410 GONE",
+              "411 LENGTH_REQUIRED",
+              "412 PRECONDITION_FAILED",
+              "413 PAYLOAD_TOO_LARGE",
+              "413 REQUEST_ENTITY_TOO_LARGE",
+              "414 URI_TOO_LONG",
+              "414 REQUEST_URI_TOO_LONG",
+              "415 UNSUPPORTED_MEDIA_TYPE",
+              "416 REQUESTED_RANGE_NOT_SATISFIABLE",
+              "417 EXPECTATION_FAILED",
+              "418 I_AM_A_TEAPOT",
+              "419 INSUFFICIENT_SPACE_ON_RESOURCE",
+              "420 METHOD_FAILURE",
+              "421 DESTINATION_LOCKED",
+              "422 UNPROCESSABLE_ENTITY",
+              "423 LOCKED",
+              "424 FAILED_DEPENDENCY",
+              "426 UPGRADE_REQUIRED",
+              "428 PRECONDITION_REQUIRED",
+              "429 TOO_MANY_REQUESTS",
+              "431 REQUEST_HEADER_FIELDS_TOO_LARGE",
+              "451 UNAVAILABLE_FOR_LEGAL_REASONS",
+              "500 INTERNAL_SERVER_ERROR",
+              "501 NOT_IMPLEMENTED",
+              "502 BAD_GATEWAY",
+              "503 SERVICE_UNAVAILABLE",
+              "504 GATEWAY_TIMEOUT",
+              "505 HTTP_VERSION_NOT_SUPPORTED",
+              "506 VARIANT_ALSO_NEGOTIATES",
+              "507 INSUFFICIENT_STORAGE",
+              "508 LOOP_DETECTED",
+              "509 BANDWIDTH_LIMIT_EXCEEDED",
+              "510 NOT_EXTENDED",
+              "511 NETWORK_AUTHENTICATION_REQUIRED"
+            ]
+          },
+          "statusCodeValue": {
+            "type": "integer",
+            "format": "int32"
+          }
+        },
+        "title": "ResponseEntity"
+      },
+      "Status": {
+        "type": "object",
+        "properties": {
+          "code": {
+            "type": "string"
+          },
+          "message": {
+            "type": "string"
+          }
+        },
+        "title": "Status"
+      },
+      "TransactionWebHookRequest": {
+        "type": "object",
+        "properties": {
+          "external_id": {
+            "type": "string"
+          },
+          "state": {
+            "type": "string"
+          }
+        },
+        "title": "TransactionWebHookRequest"
+      }
+    }
+  }
