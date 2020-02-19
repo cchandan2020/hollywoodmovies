@@ -22,7 +22,7 @@ function App() {
   return (
     <div className="App">
        <h1> Best Movies</h1>
-        <Movie title ='The First Movie' image={megaShark} score='7.5'/>
+        <Movie title ='The First1 Movie' image={megaShark} score='7.5'/>
         <Movie title ='The Second2 Movie'image={sharkFirst}score='9.5'/>
         <Movie title ='The Third Movie' image={sharkSecond}score='10'/>
         <div>
